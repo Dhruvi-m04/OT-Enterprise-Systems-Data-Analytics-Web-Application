@@ -1,0 +1,302 @@
+import tkinter as tk
+from tkinter import ttk
+import requests
+import threading
+import urllib3
+from datetime import datetime
+
+# Disable SSL warnings if needed
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ---------------------------
+# CONFIGURATION
+# ---------------------------
+API_URL_POST = "https://oracleapex.com/ords/dm20/myapi/postdata"
+API_URL_GET = "https://oracleapex.com/ords/dm20/myapi/getdata"
+USERNAME = "4397146@myuwc.ac.za"
+PASSWORD = "Apex_Dhruvi04"
+
+
+# ---------------------------
+# FUNCTION TO CREATE RESULTS WINDOW
+# ---------------------------
+def create_results_window(employee_id, items):
+    """Create a new window to display the results table"""
+    results_window = tk.Toplevel(root)
+    results_window.title(f"Usage Report - Employee ID: {employee_id}")
+    results_window.geometry("1200x600")
+    results_window.configure(bg='#f0f0f0')
+    
+    # Create main frame
+    main_frame = tk.Frame(results_window, bg='#f0f0f0')
+    main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    # Create a frame for the table
+    table_frame = tk.Frame(main_frame, relief='solid', bd=1)
+    table_frame.pack(fill='both', expand=True)
+    
+    # Create Treeview with custom style
+    style = ttk.Style()
+    style.theme_use('clam')
+    
+    # Configure the treeview style
+    style.configure("Results.Treeview.Heading",
+                    background='#e1e1e1',
+                    foreground='black',
+                    font=('Arial', 10, 'bold'),
+                    borderwidth=1,
+                    relief='solid')
+    
+    style.configure("Results.Treeview",
+                    background='white',
+                    foreground='black',
+                    fieldbackground='white',
+                    font=('Arial', 9),
+                    borderwidth=0)
+    
+    # Create the table
+    tree = ttk.Treeview(
+        table_frame,
+        columns=("Booking ID", "Item ID", "Employee ID", "Date Booked", "Date Returned"),
+        show='headings',
+        style="Results.Treeview"
+    )
+    
+    # Configure column headings and widths
+    columns_config = [
+        ("Booking ID", 120),
+        ("Item ID", 150),
+        ("Employee ID", 150),
+        ("Date Booked", 200),
+        ("Date Returned", 200)
+    ]
+    
+    for col, width in columns_config:
+        tree.heading(col, text=col)
+        tree.column(col, width=width, minwidth=100, anchor='center')
+    
+    # Configure row tags for alternating colors
+    tree.tag_configure("even_row", background='#f8f8f8')
+    tree.tag_configure("odd_row", background='white')
+    tree.tag_configure("even_row_not_returned", background='#e3f2fd')
+    tree.tag_configure("odd_row_not_returned", background='#bbdefb')
+    
+    # Sort items by booking_id (newest first)
+    sorted_items = sorted(items, key=lambda x: x.get("booking_id", 0), reverse=True)
+    
+    # Insert data into table
+    for i, item in enumerate(sorted_items):
+        booking_id = item.get("booking_id", "")
+        item_id = item.get("item_id", "")
+        employee_id_data = item.get("employee_id", "")
+        date_booked = item.get("date_booked", "")
+        date_returned = item.get("date_returned")
+        
+        # Alternate row colors
+        if i % 2 == 0:
+            tags = ("even_row",)
+        else:
+            tags = ("odd_row",)
+        
+        # Add special highlighting for non-returned items
+        if date_returned == "None":
+            if i % 2 == 0:
+                tags = ("even_row_not_returned",)
+            else:
+                tags = ("odd_row_not_returned",)
+        
+        tree.insert("", tk.END, values=(
+            booking_id,
+            item_id,
+            employee_id_data,
+            date_booked,
+            date_returned
+        ), tags=tags)
+    
+    # Pack the tree
+    tree.pack(side='left', fill='both', expand=True)
+    
+    # Add scrollbar
+    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+    scrollbar.pack(side='right', fill='y')
+    tree.configure(yscrollcommand=scrollbar.set)
+    
+    # Add a close button
+    close_frame = tk.Frame(main_frame, bg='#f0f0f0')
+    close_frame.pack(fill='x', pady=(10, 0))
+    
+    close_button = tk.Button(
+        close_frame,
+        text="Close",
+        command=results_window.destroy,
+        font=("Arial", 10),
+        bg='#f44336',
+        fg='white',
+        padx=20
+    )
+    close_button.pack(side='right')
+    
+    # Show record count
+    count_label = tk.Label(
+        close_frame, 
+        text=f"Showing {len(sorted_items)} records for Employee ID: {employee_id}",
+        font=("Arial", 9),
+        bg='#f0f0f0'
+    )
+    count_label.pack(side='left')
+
+# ---------------------------
+# FUNCTION TO CHECKOUT ITEM (THREADED)
+# ---------------------------
+def submit_checkout_threaded(employee_id):
+    """Run the checkout process in a separate thread"""
+    if not employee_id:
+        return
+    
+    # Disable button to prevent multiple clicks
+    checkout_button.config(state='disabled', text='Processing...')
+    
+    def checkout_worker():
+        try:
+            submit_checkout(employee_id)
+        finally:
+            # Re-enable button regardless of success or failure
+            root.after(0, lambda: checkout_button.config(state='normal', text='Checkout and Show Activity'))
+    
+    # Start the worker thread
+    thread = threading.Thread(target=checkout_worker, daemon=True)
+    thread.start()
+
+def submit_checkout(employee_id):
+    try:
+        timeout = 30
+        
+        # POST request to check out the next available item
+        payload = {"employee_id": employee_id}
+        print(f"Sending POST request to {API_URL_POST}")
+        print(f"Payload: {payload}")
+        
+        response_post = requests.post(
+            API_URL_POST,
+            json=payload,
+            auth=(USERNAME, PASSWORD),
+            timeout=timeout,
+            verify=False,
+            headers={
+                'Content-Type': 'application/json',
+                'User-Agent': 'Equipment-Checkout-App/1.0'
+            }
+        )
+        
+        print(f"Connection successful!")
+        print(f"POST Response: {response_post.text}")
+        
+        response_post.raise_for_status()
+        
+        try:
+            result_post = response_post.json()
+        except ValueError:
+            return
+        
+        if result_post.get("status") == "success":
+            booking_id = result_post.get("booking_id")
+            item_id = result_post.get("item_id")
+            print(f"Success: Item checked out (Booking ID: {booking_id}, Item ID: {item_id})")
+        else:
+            print(f"Error: {result_post.get('message', 'Unknown error during checkout')}")
+            return
+        
+        # GET request to fetch this employee's activity
+        print(f"Sending GET request to {API_URL_GET}")
+        
+        response_get = requests.get(
+            API_URL_GET,
+            params={"employee_id": employee_id},
+            auth=(USERNAME, PASSWORD),
+            timeout=timeout,
+            verify=False,
+            headers={'User-Agent': 'Equipment-Checkout-App/1.0'}
+        )
+        
+        print(f"Connection successful!")
+        
+        response_get.raise_for_status()
+        
+        try:
+            data = response_get.json()
+        except ValueError:
+            return
+        
+        # Extract items from the response
+        if isinstance(data, dict) and "items" in data:
+            items = data["items"]
+        elif isinstance(data, list):
+            items = data
+        else:
+            items = []
+        
+        # Filter items for this specific employee
+        employee_items = [item for item in items if str(item.get("employee_id")) == str(employee_id)]
+        
+        if not employee_items:
+            print(f"No activity found for Employee ID: {employee_id}")
+            return
+        
+        # Create and show results window
+        root.after(0, lambda: create_results_window(employee_id, employee_items))
+        
+    except requests.exceptions.Timeout:
+        print("Error: Request timed out. Check your connection.")
+    except requests.exceptions.ConnectionError as e:
+        print(f"Error: Cannot connect to server: {str(e)}")
+    except requests.exceptions.HTTPError as e:
+        print(f"Error: Server error: {e}")
+    except Exception as e:
+        print(f"Error: Unexpected error: {str(e)}")
+
+# ---------------------------
+# MAIN WINDOW GUI
+# ---------------------------
+root = tk.Tk()
+root.title("Employee Equipment Checkout")
+root.geometry("400x200")
+root.configure(bg='#f0f0f0')
+
+# Center the window on screen
+root.eval('tk::PlaceWindow . center')
+
+# Create main frame
+main_frame = tk.Frame(root, bg='#f0f0f0')
+main_frame.pack(expand=True, fill='both')
+
+# Center everything vertically and horizontally
+center_frame = tk.Frame(main_frame, bg='#f0f0f0')
+center_frame.pack(expand=True)
+
+# Employee ID label
+tk.Label(center_frame, text="Enter Employee ID:", font=("Arial", 12), bg='#f0f0f0').pack(pady=(0, 10))
+
+# Employee ID entry
+entry_employeeID = tk.Entry(center_frame, width=20, font=("Arial", 12), justify='center')
+entry_employeeID.pack(pady=(0, 20))
+
+# Checkout button
+checkout_button = tk.Button(
+    center_frame,
+    text="Checkout and Show Activity",
+    command=lambda: submit_checkout_threaded(entry_employeeID.get().strip()),
+    font=("Arial", 11),
+    # bg='#4CAF50',
+    fg='black',
+    padx=20,
+    pady=10
+)
+checkout_button.pack()
+
+# Allow Enter key to trigger checkout
+entry_employeeID.bind('<Return>', lambda event: submit_checkout_threaded(entry_employeeID.get().strip()))
+
+# Focus on the entry field
+entry_employeeID.focus()
+
+root.mainloop()
